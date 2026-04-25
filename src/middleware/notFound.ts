@@ -1,8 +1,10 @@
-import { Request, Response } from "express";
+import type { Request, Response, NextFunction } from "express";
+import { NotFoundError } from "../shared/errors/HttpError.js";
 
-export const notFound = (req: Request, res: Response): void => {
-  res.status(404).json({
-    success: false,
-    message: `Route not found: ${req.method} ${req.originalUrl}`,
-  });
+export const notFound = (
+  req: Request,
+  _res: Response,
+  next: NextFunction
+): void => {
+  next(new NotFoundError(`Route ${req.method} ${req.originalUrl} not found`));
 };

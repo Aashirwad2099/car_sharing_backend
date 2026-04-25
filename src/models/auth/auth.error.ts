@@ -1,0 +1,26 @@
+// Centralised error codes for the auth domain.
+// Using string enums means errors are readable in API responses.
+
+export enum AuthErrorCode {
+  // Registration
+  PHONE_ALREADY_EXISTS     = "AUTH_PHONE_ALREADY_EXISTS",
+  ROLE_NOT_FOUND           = "AUTH_ROLE_NOT_FOUND",
+  REGISTRATION_INCOMPLETE  = "AUTH_REGISTRATION_INCOMPLETE",
+
+  // OTP
+  OTP_NOT_FOUND            = "AUTH_OTP_NOT_FOUND",
+  OTP_EXPIRED              = "AUTH_OTP_EXPIRED",
+  OTP_ALREADY_USED         = "AUTH_OTP_ALREADY_USED",
+  OTP_INVALID              = "AUTH_OTP_INVALID",
+  OTP_MAX_ATTEMPTS         = "AUTH_OTP_MAX_ATTEMPTS",
+  OTP_SEND_FAILED          = "AUTH_OTP_SEND_FAILED",
+
+  // Phone verification
+  PHONE_NOT_VERIFIED       = "AUTH_PHONE_NOT_VERIFIED",
+  PHONE_ALREADY_VERIFIED   = "AUTH_PHONE_ALREADY_VERIFIED",
+
+  // Account
+  ACCOUNT_NOT_FOUND        = "AUTH_ACCOUNT_NOT_FOUND",
+  ACCOUNT_SUSPENDED        = "AUTH_ACCOUNT_SUSPENDED",
+  INVALID_CREDENTIALS      = "AUTH_INVALID_CREDENTIALS",
+}

@@ -1,3 +1,4 @@
+// schema.prisma
 generator client {
   provider = "prisma-client-js"
 }
@@ -6,8 +7,139 @@ datasource db {
   provider = "postgresql"
 }
 
+// ─── Enums ───────────────────────────────────────────────
+
+enum AccountStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  DELETED
+}
+
+enum OtpPurpose {
+  REGISTER
+  LOGIN
+  RESET_PASSWORD
+  PHONE_CHANGE
+}
+
+enum DeliveryChannel {
+  SMS
+  EMAIL
+}
+
+enum DigilockerStatus {
+  INITIATED
+  AUTHORIZED
+  VERIFIED
+  FAILED
+}
+
+// ─── Models ──────────────────────────────────────────────
+
+model Role {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique @db.VarChar(50)
+  description String?  @db.VarChar(255)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  users User[]
+
+  @@map("roles")
+}
+
+
 model User {
-  id    Int     @id @default(autoincrement())
-  email String  @unique
-  name  String?
+  id                   String        @id @default(uuid())
+  name                 String        @db.VarChar(100)
+  phone                String        @unique @db.VarChar(15)
+  passwordHash         String?       @map("password_hash")
+  roleId               Int           @map("role_id")
+  isPhoneVerified      Boolean       @default(false) @map("is_phone_verified")
+  isDigilockerVerified Boolean       @default(false) @map("is_digilocker_verified")
+  digilockerUid        String?       @map("digilocker_uid") @db.VarChar(100)
+  digilockerToken      String?       @map("digilocker_token")
+  accountStatus        AccountStatus @default(PENDING) @map("account_status")
+  createdAt            DateTime      @default(now()) @map("created_at")
+  updatedAt            DateTime      @updatedAt @map("updated_at")
+
+  role                Role                 @relation(fields: [roleId], references: [id])
+  otpVerifications    OtpVerification[]
+  refreshTokens       RefreshToken[]
+  passwordResetTokens PasswordResetToken[]
+  digilockerSessions  DigilockerSession[]
+
+  @@index([phone, accountStatus])
+  @@map("users")
+}
+
+
+model OtpVerification {
+  id        String     @id @default(uuid())
+  userId    String?    @map("user_id")      // nullable: OTP sent before user row exists
+  phone     String     @db.VarChar(15)
+  otpHash   String     @map("otp_hash")     // always store hashed (bcrypt/sha256)
+  purpose   OtpPurpose
+  attempts  Int        @default(0)
+  isUsed    Boolean    @default(false) @map("is_used")
+  expiresAt DateTime   @map("expires_at")
+  createdAt DateTime   @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([phone, purpose, isUsed])
+  @@index([expiresAt])
+  @@map("otp_verifications")
+}
+
+
+model RefreshToken {
+  id         String   @id @default(uuid())
+  userId     String   @map("user_id")
+  tokenHash  String   @unique @map("token_hash")  // SHA-256 of raw token
+  deviceInfo String?  @map("device_info") @db.VarChar(255)
+  ipAddress  String?  @map("ip_address") @db.VarChar(45)
+  isRevoked  Boolean  @default(false) @map("is_revoked")
+  expiresAt  DateTime @map("expires_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRevoked])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+
+model PasswordResetToken {
+  id              String          @id @default(uuid())
+  userId          String          @map("user_id")
+  tokenHash       String          @unique @map("token_hash")
+  deliveryChannel DeliveryChannel @default(SMS) @map("delivery_channel")
+  isUsed          Boolean         @default(false) @map("is_used")
+  expiresAt       DateTime        @map("expires_at")
+  createdAt       DateTime        @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isUsed])
+  @@map("password_reset_tokens")
+}
+
+
+model DigilockerSession {
+  id                 String           @id @default(uuid())
+  userId             String           @map("user_id")
+  stateToken         String           @unique @map("state_token") @db.VarChar(128)
+  authCode           String?          @map("auth_code")
+  accessTokenHash    String?          @map("access_token_hash")
+  verificationStatus DigilockerStatus @default(INITIATED) @map("verification_status")
+  verifiedData       Json?            @map("verified_data")
+  expiresAt          DateTime         @map("expires_at")
+  createdAt          DateTime         @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, verificationStatus])
+  @@map("digilocker_sessions")
 }

@@ -18,4 +18,7 @@ export const env = {
   JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || "7d",
   isDev: process.env.NODE_ENV === "development",
   isProd: process.env.NODE_ENV === "production",
+//   // In your env.ts, add these:
+// MSG91_AUTH_KEY: env.isProd ? requireEnv("MSG91_AUTH_KEY") : process.env.MSG91_AUTH_KEY || "dev-not-set",
+// MSG91_TEMPLATE_ID: env.isProd ? requireEnv("MSG91_TEMPLATE_ID") : process.env.MSG91_TEMPLATE_ID || "dev-not-set",
 } as const;

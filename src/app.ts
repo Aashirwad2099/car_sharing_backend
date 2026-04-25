@@ -1,37 +1,30 @@
-import express, { Application, Request, Response } from "express";
-import cors from "cors";
+import express from "express";
 import helmet from "helmet";
-import morgan from "morgan";
+import cors from "cors";
 import { env } from "./config/env.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { notFound } from "./middleware/notFound.js";
+import authRoutes from "./models/auth/auth.routes.js";
 
-const app: Application = express();
+const app = express();
 
-// ─── Security & Parsing ───────────────────────────────────────
+// ─── Security Middleware ───────────────────────────────────
 app.use(helmet());
-app.use(cors({ origin: "*", credentials: true })); // tighten in prod
-app.use(express.json({ limit: "10kb" }));
-app.use(express.urlencoded({ extended: true }));
+app.use(cors({ origin: env.isDev ? "*" : process.env.ALLOWED_ORIGINS?.split(",") }));
 
-// ─── Logging ──────────────────────────────────────────────────
-if (env.isDev) app.use(morgan("dev"));
+// ─── Body Parsing ─────────────────────────────────────────
+app.use(express.json({ limit: "10kb" })); // Prevent payload bombing
+app.use(express.urlencoded({ extended: true, limit: "10kb" }));
 
-// ─── Health Check ─────────────────────────────────────────────
-app.get(`${env.API_PREFIX}/health`, (_req: Request, res: Response) => {
-  res.status(200).json({
-    success: true,
-    message: "Server is healthy 🚀",
-    environment: env.NODE_ENV,
-    timestamp: new Date().toISOString(),
-  });
+// ─── Health Check ─────────────────────────────────────────
+app.get("/health", (_req, res) => {
+  res.json({ status: "ok", env: env.NODE_ENV, timestamp: new Date().toISOString() });
 });
 
-// ─── Routes (add here as you build) ───────────────────────────
-// app.use(`${env.API_PREFIX}/auth`, authRouter);
-// app.use(`${env.API_PREFIX}/rides`, ridesRouter);
+// ─── API Routes ───────────────────────────────────────────
+app.use(`${env.API_PREFIX}/auth`, authRoutes);
 
-// ─── 404 & Error Handlers ─────────────────────────────────────
+// ─── 404 + Error Handlers (must be last) ─────────────────
 app.use(notFound);
 app.use(errorHandler);
 
