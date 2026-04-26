@@ -5,11 +5,12 @@ import type {
   InitiateRegisterInput,
   VerifyOtpInput,
   CompleteRegisterInput,
+  LoginInput,
 } from "./auth.dto.js";
 
 /**
  * AuthController — HTTP layer only.
- * Responsibilities: parse req, call service, format response.
+ * Parses request → calls service → formats response.
  * Zero business logic here.
  */
 export class AuthController {
@@ -18,16 +19,15 @@ export class AuthController {
   constructor() {
     this.authService = new AuthService();
 
-    // Bind methods so `this` is preserved when used as route handlers
-    this.initiateRegister = this.initiateRegister.bind(this);
-    this.verifyOtp = this.verifyOtp.bind(this);
-    this.completeRegister = this.completeRegister.bind(this);
+    // Bind so `this` is preserved when methods are used as route handlers
+    this.initiateRegister  = this.initiateRegister.bind(this);
+    this.verifyOtp         = this.verifyOtp.bind(this);
+    this.completeRegister  = this.completeRegister.bind(this);
+    this.login             = this.login.bind(this);
+    this.refreshTokens     = this.refreshTokens.bind(this);
   }
 
-  /**
-   * POST /auth/register/initiate
-   * Creates PENDING user and sends OTP to phone
-   */
+  // POST /auth/register/initiate
   async initiateRegister(
     req: Request<{}, {}, InitiateRegisterInput>,
     res: Response,
@@ -41,10 +41,7 @@ export class AuthController {
     }
   }
 
-  /**
-   * POST /auth/register/verify-otp
-   * Verifies the OTP and marks phone as verified
-   */
+  // POST /auth/register/verify-otp
   async verifyOtp(
     req: Request<{}, {}, VerifyOtpInput>,
     res: Response,
@@ -58,10 +55,7 @@ export class AuthController {
     }
   }
 
-  /**
-   * POST /auth/register/complete
-   * Sets password and activates account
-   */
+  // POST /auth/register/complete
   async completeRegister(
     req: Request<{}, {}, CompleteRegisterInput>,
     res: Response,
@@ -70,6 +64,51 @@ export class AuthController {
     try {
       const result = await this.authService.completeRegister(req.body);
       ApiResponse.created(res, result, result.message);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // POST /auth/login
+  async login(
+    req: Request<{}, {}, LoginInput>,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const meta = {
+        ipAddress: req.ip ?? req.socket.remoteAddress,
+        deviceInfo: req.headers["user-agent"],
+      };
+
+      const result = await this.authService.login(req.body, meta);
+      ApiResponse.success(res, result, "Login successful");
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // POST /auth/refresh
+  async refreshTokens(
+    req: Request<{}, {}, { refreshToken: string }>,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const { refreshToken } = req.body;
+
+      if (!refreshToken) {
+        res.status(400).json({ success: false, message: "Refresh token is required" });
+        return;
+      }
+
+      const meta = {
+        ipAddress: req.ip ?? req.socket.remoteAddress,
+        deviceInfo: req.headers["user-agent"],
+      };
+
+      const tokens = await this.authService.refreshTokens(refreshToken, meta);
+      ApiResponse.success(res, tokens, "Tokens refreshed successfully");
     } catch (error) {
       next(error);
     }

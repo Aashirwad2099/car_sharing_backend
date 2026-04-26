@@ -1,4 +1,4 @@
-import type { OtpPurpose, User, OtpVerification, Role } from "@prisma/client";
+import type { OtpPurpose, User, OtpVerification, Role, RefreshToken } from "@prisma/client";
 import { prisma } from "../../config/database.js";
 
 /**
@@ -8,12 +8,18 @@ import { prisma } from "../../config/database.js";
 export class AuthRepository {
   // ─── User ──────────────────────────────────────────────
 
-  async findUserByPhone(phone: string): Promise<User | null> {
-    return prisma.user.findUnique({ where: { phone } });
+  async findUserByPhone(phone: string): Promise<(User & { role: Role }) | null> {
+    return prisma.user.findUnique({
+      where: { phone },
+      include: { role: true },
+    });
   }
 
-  async findUserById(id: string): Promise<User | null> {
-    return prisma.user.findUnique({ where: { id } });
+  async findUserById(id: string): Promise<(User & { role: Role }) | null> {
+    return prisma.user.findUnique({
+      where: { id },
+      include: { role: true },
+    });
   }
 
   async createUser(data: {
@@ -30,10 +36,7 @@ export class AuthRepository {
   ): Promise<User> {
     return prisma.user.update({
       where: { id: userId },
-      data: {
-        passwordHash,
-        accountStatus: "ACTIVE",
-      },
+      data: { passwordHash, accountStatus: "ACTIVE" },
     });
   }
 
@@ -52,14 +55,7 @@ export class AuthRepository {
 
   // ─── OTP ───────────────────────────────────────────────
 
-  /**
-   * Invalidate all previous unused OTPs for the same phone+purpose
-   * before creating a new one — prevents OTP hoarding attacks.
-   */
-  async invalidatePreviousOtps(
-    phone: string,
-    purpose: OtpPurpose
-  ): Promise<void> {
+  async invalidatePreviousOtps(phone: string, purpose: OtpPurpose): Promise<void> {
     await prisma.otpVerification.updateMany({
       where: { phone, purpose, isUsed: false },
       data: { isUsed: true },
@@ -76,13 +72,7 @@ export class AuthRepository {
     return prisma.otpVerification.create({ data });
   }
 
-  /**
-   * Find the most recent active (unused, non-expired) OTP for phone+purpose
-   */
-  async findActiveOtp(
-    phone: string,
-    purpose: OtpPurpose
-  ): Promise<OtpVerification | null> {
+  async findActiveOtp(phone: string, purpose: OtpPurpose): Promise<OtpVerification | null> {
     return prisma.otpVerification.findFirst({
       where: {
         phone,
@@ -106,5 +96,58 @@ export class AuthRepository {
       where: { id: otpId },
       data: { isUsed: true },
     });
+  }
+
+  // ─── Refresh Token ─────────────────────────────────────
+
+  async createRefreshToken(data: {
+    userId: string;
+    tokenHash: string;
+    deviceInfo?: string;
+    ipAddress?: string;
+    expiresAt: Date;
+  }): Promise<RefreshToken> {
+    return prisma.refreshToken.create({ data });
+  }
+
+  async findRefreshToken(tokenHash: string): Promise<RefreshToken | null> {
+    return prisma.refreshToken.findUnique({ where: { tokenHash } });
+  }
+
+  async revokeRefreshToken(tokenHash: string): Promise<void> {
+    await prisma.refreshToken.updateMany({
+      where: { tokenHash },
+      data: { isRevoked: true },
+    });
+  }
+
+  /**
+   * Revoke all active refresh tokens for a user.
+   * Used on logout-all-devices or account suspension.
+   */
+  async revokeAllUserRefreshTokens(userId: string): Promise<void> {
+    await prisma.refreshToken.updateMany({
+      where: { userId, isRevoked: false },
+      data: { isRevoked: true },
+    });
+  }
+
+  /**
+   * Enforce a max of N active sessions per user.
+   * Revokes oldest tokens beyond the limit.
+   */
+  async enforceMaxSessions(userId: string, maxSessions = 5): Promise<void> {
+    const activeTokens = await prisma.refreshToken.findMany({
+      where: { userId, isRevoked: false, expiresAt: { gt: new Date() } },
+      orderBy: { createdAt: "asc" }, // oldest first
+    });
+
+    if (activeTokens.length >= maxSessions) {
+      const toRevoke = activeTokens.slice(0, activeTokens.length - maxSessions + 1);
+      await prisma.refreshToken.updateMany({
+        where: { id: { in: toRevoke.map((t) => t.id) } },
+        data: { isRevoked: true },
+      });
+    }
   }
 }

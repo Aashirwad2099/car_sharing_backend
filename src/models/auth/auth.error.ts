@@ -1,6 +1,3 @@
-// Centralised error codes for the auth domain.
-// Using string enums means errors are readable in API responses.
-
 export enum AuthErrorCode {
   // Registration
   PHONE_ALREADY_EXISTS     = "AUTH_PHONE_ALREADY_EXISTS",
@@ -22,5 +19,11 @@ export enum AuthErrorCode {
   // Account
   ACCOUNT_NOT_FOUND        = "AUTH_ACCOUNT_NOT_FOUND",
   ACCOUNT_SUSPENDED        = "AUTH_ACCOUNT_SUSPENDED",
+  ACCOUNT_PENDING          = "AUTH_ACCOUNT_PENDING",
   INVALID_CREDENTIALS      = "AUTH_INVALID_CREDENTIALS",
+
+  // Token
+  TOKEN_INVALID            = "AUTH_TOKEN_INVALID",
+  TOKEN_EXPIRED            = "AUTH_TOKEN_EXPIRED",
+  TOKEN_REVOKED            = "AUTH_TOKEN_REVOKED",
 }

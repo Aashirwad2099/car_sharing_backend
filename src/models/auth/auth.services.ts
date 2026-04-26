@@ -2,25 +2,49 @@ import type {
   InitiateRegisterInput,
   VerifyOtpInput,
   CompleteRegisterInput,
+  LoginInput,
 } from "./auth.dto.js";
 import { AuthRepository } from "./auth.repository.js";
 import { AuthErrorCode } from "./auth.error.js";
 import { HashUtil } from "../../shared/utils/hash.utils.js";
 import { OtpUtil } from "../../shared/utils/otp.util.js";
+import { JwtUtil } from "../../shared/utils/jwt.utils.js";
 import {
   ConflictError,
   NotFoundError,
   BadRequestError,
   TooManyRequestsError,
+  UnauthorizedError,
+  ForbiddenError,
 } from "../../shared/errors/HttpError.js";
 
+export interface AuthTokens {
+  accessToken: string;
+  refreshToken: string;
+}
+
+export interface LoginResult {
+  user: {
+    id: string;
+    name: string;
+    phone: string;
+    role: string;
+    accountStatus: string;
+  };
+  tokens: AuthTokens;
+}
+
 /**
- * AuthService — orchestrates registration business logic.
+ * AuthService — orchestrates all auth business logic.
  *
- * Registration is a 3-step flow:
- *   1. initiateRegister  → create user (PENDING), send OTP
+ * Registration flow (3 steps):
+ *   1. initiateRegister  → create PENDING user, send OTP
  *   2. verifyOtp         → verify OTP, mark phone verified
  *   3. completeRegister  → set password, activate account
+ *
+ * Login flow (1 step):
+ *   4. login             → phone + password → access + refresh token
+ *   5. refreshTokens     → rotate refresh token → new token pair
  */
 export class AuthService {
   private readonly repo: AuthRepository;
@@ -34,19 +58,15 @@ export class AuthService {
   async initiateRegister(input: InitiateRegisterInput): Promise<{
     message: string;
     otpExpiresInMinutes: number;
-    // In production, NEVER return the OTP — send via SMS
-    // Included here only for dev/testing environments
     _devOtp?: string;
   }> {
     const { name, phone, roleId } = input;
 
-    // 1. Check role exists
     const role = await this.repo.findRoleById(roleId);
     if (!role) {
       throw new NotFoundError("Role not found", AuthErrorCode.ROLE_NOT_FOUND);
     }
 
-    // 2. Check if phone already registered and active
     const existingUser = await this.repo.findUserByPhone(phone);
     if (existingUser && existingUser.accountStatus === "ACTIVE") {
       throw new ConflictError(
@@ -55,7 +75,6 @@ export class AuthService {
       );
     }
 
-    // 3. Create user row in PENDING state (idempotent — reuse if already PENDING)
     let userId: string;
     if (existingUser) {
       userId = existingUser.id;
@@ -64,15 +83,12 @@ export class AuthService {
       userId = user.id;
     }
 
-    // 4. Invalidate any old unused OTPs for this phone+purpose
     await this.repo.invalidatePreviousOtps(phone, "REGISTER");
 
-    // 5. Generate and hash OTP
     const otp = OtpUtil.generate();
     const otpHash = OtpUtil.hash(otp);
     const expiresAt = OtpUtil.getExpiryDate();
 
-    // 6. Persist OTP record
     await this.repo.createOtpVerification({
       userId,
       phone,
@@ -81,14 +97,15 @@ export class AuthService {
       expiresAt,
     });
 
-    // 7. TODO: Send OTP via MSG91/Twilio
-    // await SmsService.send(phone, `Your OTP is ${otp}. Valid for ${OtpUtil.expiryMinutes} minutes.`);
-    console.log(`[DEV] OTP for ${phone}: ${otp}`); // Remove in production
+    // TODO: await SmsService.sendOtp(phone, otp);
+    console.log("─────────────────────────────────────");
+    console.log(`📱 [SMS MOCK] To: ${phone}`);
+    console.log(`🔑 [SMS MOCK] OTP: ${otp}`);
+    console.log("─────────────────────────────────────");
 
     return {
       message: `OTP sent to ${phone}`,
       otpExpiresInMinutes: OtpUtil.expiryMinutes,
-      // Only expose in non-production environments
       ...(process.env.NODE_ENV !== "production" && { _devOtp: otp }),
     };
   }
@@ -98,7 +115,6 @@ export class AuthService {
   async verifyOtp(input: VerifyOtpInput): Promise<{ message: string }> {
     const { phone, otp } = input;
 
-    // 1. User must exist
     const user = await this.repo.findUserByPhone(phone);
     if (!user) {
       throw new NotFoundError(
@@ -107,7 +123,6 @@ export class AuthService {
       );
     }
 
-    // 2. Phone must not already be verified
     if (user.isPhoneVerified) {
       throw new BadRequestError(
         "Phone number already verified",
@@ -115,7 +130,6 @@ export class AuthService {
       );
     }
 
-    // 3. Find active OTP record
     const otpRecord = await this.repo.findActiveOtp(phone, "REGISTER");
     if (!otpRecord) {
       throw new BadRequestError(
@@ -124,29 +138,24 @@ export class AuthService {
       );
     }
 
-    // 4. Enforce attempt limit before verifying
     if (otpRecord.attempts >= OtpUtil.maxAttempts) {
       throw new TooManyRequestsError(
-        `Maximum OTP attempts exceeded. Please request a new OTP.`,
+        "Maximum OTP attempts exceeded. Please request a new OTP.",
         AuthErrorCode.OTP_MAX_ATTEMPTS
       );
     }
 
-    // 5. Increment attempts (do this before verifying — prevents brute force)
     await this.repo.incrementOtpAttempts(otpRecord.id);
 
-    // 6. Constant-time OTP comparison
     const isValid = OtpUtil.verify(otp, otpRecord.otpHash);
     if (!isValid) {
-      const remainingAttempts =
-        OtpUtil.maxAttempts - (otpRecord.attempts + 1);
+      const remainingAttempts = OtpUtil.maxAttempts - (otpRecord.attempts + 1);
       throw new BadRequestError(
         `Invalid OTP. ${remainingAttempts} attempt(s) remaining.`,
         AuthErrorCode.OTP_INVALID
       );
     }
 
-    // 7. Mark OTP as used and phone as verified — atomically
     await Promise.all([
       this.repo.markOtpUsed(otpRecord.id),
       this.repo.markPhoneVerified(user.id),
@@ -162,7 +171,6 @@ export class AuthService {
   ): Promise<{ message: string; userId: string }> {
     const { phone, password } = input;
 
-    // 1. User must exist
     const user = await this.repo.findUserByPhone(phone);
     if (!user) {
       throw new NotFoundError(
@@ -171,7 +179,6 @@ export class AuthService {
       );
     }
 
-    // 2. Phone must be verified first
     if (!user.isPhoneVerified) {
       throw new BadRequestError(
         "Please verify your phone number before completing registration",
@@ -179,7 +186,6 @@ export class AuthService {
       );
     }
 
-    // 3. Must still be in PENDING state (prevent double-completion)
     if (user.accountStatus !== "PENDING") {
       throw new ConflictError(
         "Account already registered",
@@ -187,10 +193,7 @@ export class AuthService {
       );
     }
 
-    // 4. Hash password (bcrypt, 12 rounds)
     const passwordHash = await HashUtil.hashPassword(password);
-
-    // 5. Set password and activate account
     const updatedUser = await this.repo.updateUserPasswordAndActivate(
       user.id,
       passwordHash
@@ -199,6 +202,167 @@ export class AuthService {
     return {
       message: "Registration complete. You can now log in.",
       userId: updatedUser.id,
+    };
+  }
+
+  // ─── Step 4: Login ──────────────────────────────────────
+
+  async login(
+    input: LoginInput,
+    meta: { ipAddress?: string; deviceInfo?: string }
+  ): Promise<LoginResult> {
+    const { phone, password } = input;
+
+    // 1. Find user — always include role for JWT payload
+    const user = await this.repo.findUserByPhone(phone);
+
+    // 2. User not found — use generic error (don't reveal if phone exists)
+    if (!user) {
+      throw new UnauthorizedError(
+        "Invalid phone number or password",
+        AuthErrorCode.INVALID_CREDENTIALS
+      );
+    }
+
+    // 3. Account state checks
+    if (user.accountStatus === "PENDING") {
+      throw new ForbiddenError(
+        "Account registration is incomplete. Please complete registration first.",
+        AuthErrorCode.ACCOUNT_PENDING
+      );
+    }
+
+    if (user.accountStatus === "SUSPENDED") {
+      throw new ForbiddenError(
+        "Your account has been suspended. Please contact support.",
+        AuthErrorCode.ACCOUNT_SUSPENDED
+      );
+    }
+
+    if (user.accountStatus === "DELETED") {
+      throw new UnauthorizedError(
+        "Invalid phone number or password",
+        AuthErrorCode.INVALID_CREDENTIALS
+      );
+    }
+
+    // 4. Password check — must have one (ACTIVE accounts always do)
+    if (!user.passwordHash) {
+      throw new UnauthorizedError(
+        "Invalid phone number or password",
+        AuthErrorCode.INVALID_CREDENTIALS
+      );
+    }
+
+    // 5. Constant-time bcrypt comparison — prevents timing attacks
+    const isPasswordValid = await HashUtil.comparePassword(
+      password,
+      user.passwordHash
+    );
+
+    if (!isPasswordValid) {
+      throw new UnauthorizedError(
+        "Invalid phone number or password",
+        AuthErrorCode.INVALID_CREDENTIALS
+      );
+    }
+
+    // 6. Enforce max 5 active sessions per user (revokes oldest)
+    await this.repo.enforceMaxSessions(user.id, 5);
+
+    // 7. Generate token pair
+    const jwtPayload = { sub: user.id, phone: user.phone, roleId: user.roleId };
+    const accessToken = JwtUtil.signAccessToken(jwtPayload);
+    const rawRefreshToken = HashUtil.generateSecureToken(); // random 32-byte hex
+
+    // 8. Hash and persist refresh token
+    const refreshTokenHash = HashUtil.sha256(rawRefreshToken);
+    await this.repo.createRefreshToken({
+      userId: user.id,
+      tokenHash: refreshTokenHash,
+      ipAddress: meta.ipAddress,
+      deviceInfo: meta.deviceInfo,
+      expiresAt: JwtUtil.getRefreshTokenExpiryDate(),
+    });
+
+    return {
+      user: {
+        id: user.id,
+        name: user.name,
+        phone: user.phone,
+        role: user.role.name,
+        accountStatus: user.accountStatus,
+      },
+      tokens: {
+        accessToken,
+        refreshToken: rawRefreshToken, // raw token sent to client, hash stored in DB
+      },
+    };
+  }
+
+  // ─── Step 5: Refresh Tokens ─────────────────────────────
+
+  async refreshTokens(
+    rawRefreshToken: string,
+    meta: { ipAddress?: string; deviceInfo?: string }
+  ): Promise<AuthTokens> {
+    // 1. Hash the incoming token and look it up
+    const tokenHash = HashUtil.sha256(rawRefreshToken);
+    const stored = await this.repo.findRefreshToken(tokenHash);
+
+    if (!stored) {
+      throw new UnauthorizedError(
+        "Invalid refresh token",
+        AuthErrorCode.TOKEN_INVALID
+      );
+    }
+
+    // 2. Check revoked
+    if (stored.isRevoked) {
+      // Possible token theft — revoke all sessions for this user
+      await this.repo.revokeAllUserRefreshTokens(stored.userId);
+      throw new UnauthorizedError(
+        "Refresh token has been revoked. Please log in again.",
+        AuthErrorCode.TOKEN_REVOKED
+      );
+    }
+
+    // 3. Check expiry
+    if (stored.expiresAt < new Date()) {
+      throw new UnauthorizedError(
+        "Refresh token expired. Please log in again.",
+        AuthErrorCode.TOKEN_EXPIRED
+      );
+    }
+
+    // 4. Load user
+    const user = await this.repo.findUserById(stored.userId);
+    if (!user || user.accountStatus !== "ACTIVE") {
+      throw new UnauthorizedError(
+        "Account not found or inactive",
+        AuthErrorCode.ACCOUNT_NOT_FOUND
+      );
+    }
+
+    // 5. Rotate — revoke old token, issue new pair
+    await this.repo.revokeRefreshToken(tokenHash);
+
+    const jwtPayload = { sub: user.id, phone: user.phone, roleId: user.roleId };
+    const newAccessToken = JwtUtil.signAccessToken(jwtPayload);
+    const newRawRefreshToken = HashUtil.generateSecureToken();
+    const newRefreshTokenHash = HashUtil.sha256(newRawRefreshToken);
+
+    await this.repo.createRefreshToken({
+      userId: user.id,
+      tokenHash: newRefreshTokenHash,
+      ipAddress: meta.ipAddress,
+      deviceInfo: meta.deviceInfo,
+      expiresAt: JwtUtil.getRefreshTokenExpiryDate(),
+    });
+
+    return {
+      accessToken: newAccessToken,
+      refreshToken: newRawRefreshToken,
     };
   }
 }

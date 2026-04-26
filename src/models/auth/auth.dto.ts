@@ -65,7 +65,24 @@ export const CompleteRegisterDto = z.object({
   path: ["confirmPassword"],
 });
 
+
+
+export const LoginDto = z.object({
+  phone: z
+    .string()
+    .regex(/^\+91[6-9]\d{9}$/, "Enter a valid Indian phone number (+91XXXXXXXXXX)")
+    .min(1, "Phone number is required"),
+
+  password: z
+    .string()
+    .min(1, "Password is required"),
+});
+ 
+// ─── Inferred Types ───────────────────────────────────────
+
 // ─── Inferred Types ───────────────────────────────────────
 export type InitiateRegisterInput = z.infer<typeof InitiateRegisterDto>;
 export type VerifyOtpInput = z.infer<typeof VerifyOtpDto>;
 export type CompleteRegisterInput = z.infer<typeof CompleteRegisterDto>;
+// export type VerifyOtpInput        = z.infer<typeof VerifyOtpDto>;
+export type LoginInput = z.infer<typeof LoginDto>;
