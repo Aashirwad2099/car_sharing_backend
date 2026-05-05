@@ -1,24 +1,36 @@
 import type { Request, Response, NextFunction } from "express";
 import type { ZodSchema, ZodError } from "zod";
-import { ApiResponse } from "../shared/utils/response.utils";
+import { ApiResponse } from "../shared/utils/response.utils.js";
 
 /**
- * Generic Zod validation middleware.
- * Usage: router.post('/route', validate(MyDto), controller.handler)
+ * Validate req.body against a Zod schema
  */
 export const validate =
   (schema: ZodSchema) =>
   (req: Request, res: Response, next: NextFunction): void => {
     const result = schema.safeParse(req.body);
-
     if (!result.success) {
-      const errors = formatZodErrors(result.error);
-      ApiResponse.error(res, "Validation failed", 422, "VALIDATION_ERROR", errors);
+      ApiResponse.error(res, "Validation failed", 422, "VALIDATION_ERROR", formatZodErrors(result.error));
       return;
     }
-
-    // Replace req.body with parsed+coerced data (strips unknown fields)
     req.body = result.data;
+    next();
+  };
+
+/**
+ * Validate req.query against a Zod schema
+ */
+export const validateQuery =
+  (schema: ZodSchema) =>
+  (req: Request, res: Response, next: NextFunction): void => {
+    const result = schema.safeParse(req.query);
+    if (!result.success) {
+      ApiResponse.error(res, "Invalid query parameters", 422, "VALIDATION_ERROR", formatZodErrors(result.error));
+      return;
+    }
+    // Express 5 makes req.query a getter — can't reassign directly.
+    // Store parsed data on req so downstream handlers can access it.
+    (req as any).parsedQuery = result.data;
     next();
   };
 

@@ -1,4 +1,3 @@
-// schema.prisma
 generator client {
   provider = "prisma-client-js"
 }
@@ -7,13 +6,20 @@ datasource db {
   provider = "postgresql"
 }
 
-// ─── Enums ───────────────────────────────────────────────
+// ============================================================
+// ENUMS — AUTH
+// ============================================================
 
 enum AccountStatus {
   PENDING
   ACTIVE
   SUSPENDED
   DELETED
+}
+
+enum VehicleType {
+  CAR
+  BIKE
 }
 
 enum OtpPurpose {
@@ -35,7 +41,68 @@ enum DigilockerStatus {
   FAILED
 }
 
-// ─── Models ──────────────────────────────────────────────
+// ============================================================
+// ENUMS — PLATFORM
+// ============================================================
+
+enum BookingStatus {
+  REQUESTED
+  PRE_INSPECTION_PENDING
+  PRE_INSPECTION_DONE
+  OWNER_REVIEW_PENDING
+  RIDE_STARTING
+  ACTIVE
+  RIDE_ENDING
+  POST_INSPECTION_PENDING
+  COMPLETED
+  DISPUTED
+  CANCELLED
+}
+
+enum ZoneCondition {
+  OK
+  MINOR_DENT
+  MAJOR_DENT
+}
+
+enum DentSeverity {
+  MINOR
+  MAJOR
+}
+
+enum FuelType {
+  PETROL
+  DIESEL
+  EV
+  CNG
+}
+
+enum Transmission {
+  MANUAL
+  AUTO
+}
+
+enum VehicleStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum VehicleImageType {
+  FRONT
+  BACK
+  LEFT
+  RIGHT
+  INTERIOR
+}
+
+enum FeedbackBy {
+  CUSTOMER
+  OWNER
+}
+
+// ============================================================
+// AUTH — ROLES
+// ============================================================
 
 model Role {
   id          Int      @id @default(autoincrement())
@@ -48,6 +115,9 @@ model Role {
   @@map("roles")
 }
 
+// ============================================================
+// USERS
+// ============================================================
 
 model User {
   id                   String        @id @default(uuid())
@@ -68,17 +138,66 @@ model User {
   refreshTokens       RefreshToken[]
   passwordResetTokens PasswordResetToken[]
   digilockerSessions  DigilockerSession[]
+  ownerProfile        OwnerProfile?
+  customerProfile     CustomerProfile?
 
   @@index([phone, accountStatus])
   @@map("users")
 }
 
+// ============================================================
+// OWNER PROFILE
+// ============================================================
+
+model OwnerProfile {
+  id          String   @id @default(uuid())
+  userId      String   @unique @map("user_id")
+  businessLat Decimal  @map("business_lat") @db.Decimal(10, 7)
+  businessLng Decimal  @map("business_lng") @db.Decimal(10, 7)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  user                User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vehicles            Vehicle[]
+  ownedBookings       Booking[]            @relation("BookingOwner")
+  postRideInspections PostRideInspection[]
+  callLogsAsOwner     CallLog[]            @relation("OwnerCallLogs")
+  ownerFeedbacks      Feedback[]           @relation("OwnerFeedbacks")
+
+  @@map("owner_profiles")
+}
+
+// ============================================================
+// CUSTOMER PROFILE
+// ============================================================
+
+model CustomerProfile {
+  id               String   @id @default(uuid())
+  userId           String   @unique @map("user_id")
+  totalRides       Int      @default(0) @map("total_rides")
+  minorDents       Int      @default(0) @map("minor_dents")
+  majorDents       Int      @default(0) @map("major_dents")
+  rashDrivingFlags Int      @default(0) @map("rash_driving_flags")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  user               User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  customerBookings   Booking[]  @relation("BookingCustomer")
+  callLogsAsCustomer CallLog[]  @relation("CustomerCallLogs")
+  customerFeedbacks  Feedback[] @relation("CustomerFeedbacks")
+
+  @@map("customer_profiles")
+}
+
+// ============================================================
+// AUTH — SUPPORTING TABLES (yours, untouched)
+// ============================================================
 
 model OtpVerification {
   id        String     @id @default(uuid())
-  userId    String?    @map("user_id")      // nullable: OTP sent before user row exists
+  userId    String?    @map("user_id")
   phone     String     @db.VarChar(15)
-  otpHash   String     @map("otp_hash")     // always store hashed (bcrypt/sha256)
+  otpHash   String     @map("otp_hash")
   purpose   OtpPurpose
   attempts  Int        @default(0)
   isUsed    Boolean    @default(false) @map("is_used")
@@ -92,11 +211,10 @@ model OtpVerification {
   @@map("otp_verifications")
 }
 
-
 model RefreshToken {
   id         String   @id @default(uuid())
   userId     String   @map("user_id")
-  tokenHash  String   @unique @map("token_hash")  // SHA-256 of raw token
+  tokenHash  String   @unique @map("token_hash")
   deviceInfo String?  @map("device_info") @db.VarChar(255)
   ipAddress  String?  @map("ip_address") @db.VarChar(45)
   isRevoked  Boolean  @default(false) @map("is_revoked")
@@ -109,7 +227,6 @@ model RefreshToken {
   @@index([expiresAt])
   @@map("refresh_tokens")
 }
-
 
 model PasswordResetToken {
   id              String          @id @default(uuid())
@@ -126,7 +243,6 @@ model PasswordResetToken {
   @@map("password_reset_tokens")
 }
 
-
 model DigilockerSession {
   id                 String           @id @default(uuid())
   userId             String           @map("user_id")
@@ -142,4 +258,290 @@ model DigilockerSession {
 
   @@index([userId, verificationStatus])
   @@map("digilocker_sessions")
+}
+
+// ============================================================
+// VEHICLES
+// ============================================================
+
+model Vehicle {
+  id                     String        @id @default(uuid())
+  vehicleType   VehicleType   @default(CAR) @map("vehicle_type")
+  averageRating Decimal       @default(0)   @map("average_rating") @db.Decimal(3, 2)
+  totalRatings  Int           @default(0)   @map("total_ratings")
+  searchVector  Unsupported("tsvector")? @map("search_vector")
+
+  ownerProfileId         String        @map("owner_profile_id")
+  make                   String        @db.VarChar(50)
+  model                  String        @db.VarChar(50)
+  year                   Int
+  fuelType               FuelType      @map("fuel_type")
+  transmission           Transmission
+  rcNumber               String        @unique @map("rc_number") @db.VarChar(20)
+  insuranceValidTill     DateTime      @map("insurance_valid_till")
+  pollutionCertValidTill DateTime      @map("pollution_cert_valid_till")
+
+  regularPricePerDay     Decimal  @map("regular_price_per_day") @db.Decimal(10, 2)
+  offerPricePerDay       Decimal? @map("offer_price_per_day") @db.Decimal(10, 2)
+  regularDistanceLimitKm Int      @map("regular_distance_limit_km")
+  offerDistanceLimitKm   Int?     @map("offer_distance_limit_km")
+
+  businessLat Decimal @map("business_lat") @db.Decimal(10, 7)
+  businessLng Decimal @map("business_lng") @db.Decimal(10, 7)
+
+  currentlyBooked Boolean @default(false) @map("currently_booked")
+  status             VehicleStatus @default(ACTIVE)
+  totalRentals       Int           @default(0) @map("total_rentals")
+  totalUniqueRenters Int           @default(0) @map("total_unique_renters")
+
+  // New fields for extra charges
+  extraPricePerKm        Decimal? @map("extra_price_per_km") @db.Decimal(10, 2)
+  extraPricePerHour      Decimal? @map("extra_price_per_hour") @db.Decimal(10, 2)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  owner    OwnerProfile   @relation(fields: [ownerProfileId], references: [id])
+  images   VehicleImage[]
+  bookings Booking[]
+
+  @@index([ownerProfileId, status])
+  @@index([status, vehicleType])
+  @@index([averageRating])
+  @@map("vehicles")
+}
+
+model VehicleImage {
+  id        String           @id @default(uuid())
+  vehicleId String           @map("vehicle_id")
+  imageUrl  String           @map("image_url")
+  type      VehicleImageType
+  createdAt DateTime         @default(now()) @map("created_at")
+  cloudinaryPublicId String          @map("cloudinary_public_id")
+
+  vehicle Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+
+  @@map("vehicle_images")
+}
+
+// ============================================================
+// INSPECTION ZONES MASTER — seed once with 15 fixed zones
+// ============================================================
+
+model InspectionZone {
+  id   Int    @id @default(autoincrement())
+  name String @unique @db.VarChar(50)
+  // Front Bumper, Rear Bumper, Hood, Trunk, Roof,
+  // Door FL, Door FR, Door RL, Door RR,
+  // Side Panel Left, Side Panel Right,
+  // Front Windshield, Rear Windshield,
+  // Alloys/Tyres, Underbody
+
+  preRideItems     PreRideInspectionItem[]
+  postRideFindings PostRideDentFinding[]
+
+  @@map("inspection_zones")
+}
+
+// ============================================================
+// BOOKINGS
+// ============================================================
+
+model Booking {
+  id              String        @id @default(uuid())
+  vehicleId       String        @map("vehicle_id")
+  customerProfileId String      @map("customer_profile_id")
+  ownerProfileId  String        @map("owner_profile_id")
+  status          BookingStatus @default(REQUESTED)
+
+  // START OTP: app generates → SMS to owner → owner tells customer verbally → customer enters
+  startOtp       String?   @map("start_otp")
+  startOtpExpiry DateTime? @map("start_otp_expiry")
+
+  // END OTP: same flow
+  endOtp       String?   @map("end_otp")
+  endOtpExpiry DateTime? @map("end_otp_expiry")
+
+  // Lifecycle timestamps
+  requestedAt              DateTime  @default(now()) @map("requested_at")
+  preInspectionSubmittedAt DateTime? @map("pre_inspection_submitted_at")
+  ownerApprovedAt          DateTime? @map("owner_approved_at")
+  startOtpSentAt           DateTime? @map("start_otp_sent_at")
+  activatedAt              DateTime? @map("activated_at")
+  endOtpSentAt             DateTime? @map("end_otp_sent_at")
+  rideEndedAt              DateTime? @map("ride_ended_at")
+  postInspectionDoneAt     DateTime? @map("post_inspection_done_at")
+  completedAt              DateTime? @map("completed_at")
+  cancelledAt              DateTime? @map("cancelled_at")
+
+  vehicle  Vehicle         @relation(fields: [vehicleId], references: [id])
+  customer CustomerProfile @relation("BookingCustomer", fields: [customerProfileId], references: [id])
+  owner    OwnerProfile    @relation("BookingOwner", fields: [ownerProfileId], references: [id])
+
+  preRideInspection  PreRideInspection?
+  postRideInspection PostRideInspection?
+  feedbacks          Feedback[]
+  callLogs           CallLog[]
+
+  @@index([vehicleId, status])
+  @@index([customerProfileId, status])
+  @@index([ownerProfileId, status])
+  @@map("bookings")
+}
+
+// ============================================================
+// PRE-RIDE INSPECTION — by customer, before ride starts
+// ============================================================
+
+model PreRideInspection {
+  id              String    @id @default(uuid())
+  bookingId       String    @unique @map("booking_id")
+  submittedAt     DateTime  @default(now()) @map("submitted_at")
+  acceptedByOwner Boolean   @default(false) @map("accepted_by_owner")
+  acceptedAt      DateTime? @map("accepted_at")
+
+  booking Booking                 @relation(fields: [bookingId], references: [id])
+  items   PreRideInspectionItem[]
+
+  @@map("pre_ride_inspections")
+}
+
+// 15 rows per inspection — one per zone
+model PreRideInspectionItem {
+  id           String        @id @default(uuid())
+  inspectionId String        @map("inspection_id")
+  zoneId       Int           @map("zone_id")
+  condition    ZoneCondition
+  photoUrl     String?       @map("photo_url")
+
+  inspection PreRideInspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  zone       InspectionZone    @relation(fields: [zoneId], references: [id])
+
+  @@unique([inspectionId, zoneId])
+  @@map("pre_ride_inspection_items")
+}
+
+// ============================================================
+// POST-RIDE INSPECTION — by owner, after ride ends
+// ============================================================
+
+model PostRideInspection {
+  id              String    @id @default(uuid())
+  bookingId       String    @unique @map("booking_id")
+  ownerProfileId  String    @map("owner_profile_id")
+  dentFound       Boolean   @default(false) @map("dent_found")
+  submittedAt     DateTime  @default(now()) @map("submitted_at")
+
+  booking  Booking               @relation(fields: [bookingId], references: [id])
+  owner    OwnerProfile          @relation(fields: [ownerProfileId], references: [id])
+  findings PostRideDentFinding[]
+
+  @@map("post_ride_inspections")
+}
+
+// Only created when dent found — one row per affected zone
+model PostRideDentFinding {
+  id           String       @id @default(uuid())
+  inspectionId String       @map("inspection_id")
+  zoneId       Int          @map("zone_id")
+  severity     DentSeverity
+
+  inspection PostRideInspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+  zone       InspectionZone     @relation(fields: [zoneId], references: [id])
+  photos     DentPhoto[]
+
+  @@map("post_ride_dent_findings")
+}
+
+// Multiple photos per dent finding
+model DentPhoto {
+  id        String   @id @default(uuid())
+  findingId String   @map("finding_id")
+  photoUrl  String   @map("photo_url")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  finding PostRideDentFinding @relation(fields: [findingId], references: [id], onDelete: Cascade)
+
+  @@map("dent_photos")
+}
+
+// ============================================================
+// FEEDBACK — blind 42hr delay
+// ============================================================
+
+model FeedbackQuestion {
+  id       Int        @id @default(autoincrement())
+  askedTo  FeedbackBy @map("asked_to")
+  text     String
+  isActive Boolean    @default(true) @map("is_active")
+
+  options FeedbackQuestionOption[]
+  answers FeedbackAnswer[]
+
+  @@map("feedback_questions")
+}
+
+model FeedbackQuestionOption {
+  id         Int    @id @default(autoincrement())
+  questionId Int    @map("question_id")
+  label      String @db.VarChar(100)
+
+  question FeedbackQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  answers  FeedbackAnswer[]
+
+  @@map("feedback_question_options")
+}
+
+model Feedback {
+  id                String     @id @default(uuid())
+  bookingId         String     @map("booking_id")
+  submittedBy       FeedbackBy @map("submitted_by")
+  customerProfileId String?    @map("customer_profile_id")
+  ownerProfileId    String?    @map("owner_profile_id")
+  submittedAt       DateTime   @default(now()) @map("submitted_at")
+  visibleAt         DateTime   @map("visible_at")
+  rating Int? @map("rating") // 1–5, submitted by customer
+
+  booking  Booking          @relation(fields: [bookingId], references: [id])
+  customer CustomerProfile? @relation("CustomerFeedbacks", fields: [customerProfileId], references: [id])
+  owner    OwnerProfile?    @relation("OwnerFeedbacks", fields: [ownerProfileId], references: [id])
+  answers  FeedbackAnswer[]
+
+  @@unique([bookingId, submittedBy])
+  @@map("feedbacks")
+}
+
+model FeedbackAnswer {
+  id         String  @id @default(uuid())
+  feedbackId String  @map("feedback_id")
+  questionId Int     @map("question_id")
+  optionId   Int?    @map("option_id")
+  freeText   String? @map("free_text")
+
+  feedback Feedback                @relation(fields: [feedbackId], references: [id], onDelete: Cascade)
+  question FeedbackQuestion        @relation(fields: [questionId], references: [id])
+  option   FeedbackQuestionOption? @relation(fields: [optionId], references: [id])
+
+  @@map("feedback_answers")
+}
+
+// ============================================================
+// CALL LOGS — number masking via Twilio / Exotel
+// ============================================================
+
+model CallLog {
+  id                String   @id @default(uuid())
+  bookingId         String?  @map("booking_id")
+  ownerProfileId    String   @map("owner_profile_id")
+  customerProfileId String   @map("customer_profile_id")
+  durationSec       Int?     @map("duration_sec")
+  calledAt          DateTime @default(now()) @map("called_at")
+
+  booking  Booking?         @relation(fields: [bookingId], references: [id])
+  owner    OwnerProfile     @relation("OwnerCallLogs", fields: [ownerProfileId], references: [id])
+  customer CustomerProfile  @relation("CustomerCallLogs", fields: [customerProfileId], references: [id])
+
+  @@index([ownerProfileId, calledAt])
+  @@index([customerProfileId, calledAt])
+  @@map("call_logs")
 }

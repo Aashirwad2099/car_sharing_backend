@@ -5,6 +5,7 @@ import { env } from "./config/env.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { notFound } from "./middleware/notFound.js";
 import authRoutes from "./models/auth/auth.routes.js";
+import vehicleRoute from "./models/vehicle/vehicle.routes.js"
 import { swaggerSpec } from "./config/swagger.js";
 import swaggerUi from "swagger-ui-express";
 
@@ -51,6 +52,7 @@ app.get("/health", (_req, res) => {
 
 // ─── API Routes ───────────────────────────────────────────
 app.use(`${env.API_PREFIX}/auth`, authRoutes);
+app.use(`${env.API_PREFIX}/vehicles`,vehicleRoute)
 
 // ─── 404 + Error Handlers (must be last) ─────────────────
 app.use(notFound);

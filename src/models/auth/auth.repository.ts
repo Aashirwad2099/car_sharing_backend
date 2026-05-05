@@ -1,42 +1,39 @@
-import type { OtpPurpose, User, OtpVerification, Role, RefreshToken } from "@prisma/client";
+import type {
+  OtpPurpose,
+  User,
+  OtpVerification,
+  Role,
+  RefreshToken,
+  PasswordResetToken,
+} from "@prisma/client";
 import { prisma } from "../../config/database.js";
 
-/**
- * AuthRepository — owns all DB queries for the auth domain.
- * No business logic here; only data access.
- */
 export class AuthRepository {
   // ─── User ──────────────────────────────────────────────
 
   async findUserByPhone(phone: string): Promise<(User & { role: Role }) | null> {
-    return prisma.user.findUnique({
-      where: { phone },
-      include: { role: true },
-    });
+    return prisma.user.findUnique({ where: { phone }, include: { role: true } });
   }
 
   async findUserById(id: string): Promise<(User & { role: Role }) | null> {
-    return prisma.user.findUnique({
-      where: { id },
-      include: { role: true },
-    });
+    return prisma.user.findUnique({ where: { id }, include: { role: true } });
   }
 
-  async createUser(data: {
-    name: string;
-    phone: string;
-    roleId: number;
-  }): Promise<User> {
+  async createUser(data: { name: string; phone: string; roleId: number }): Promise<User> {
     return prisma.user.create({ data });
   }
 
-  async updateUserPasswordAndActivate(
-    userId: string,
-    passwordHash: string
-  ): Promise<User> {
+  async updateUserPasswordAndActivate(userId: string, passwordHash: string): Promise<User> {
     return prisma.user.update({
       where: { id: userId },
       data: { passwordHash, accountStatus: "ACTIVE" },
+    });
+  }
+
+  async updateUserPassword(userId: string, passwordHash: string): Promise<User> {
+    return prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash },
     });
   }
 
@@ -74,12 +71,14 @@ export class AuthRepository {
 
   async findActiveOtp(phone: string, purpose: OtpPurpose): Promise<OtpVerification | null> {
     return prisma.otpVerification.findFirst({
-      where: {
-        phone,
-        purpose,
-        isUsed: false,
-        expiresAt: { gt: new Date() },
-      },
+      where: { phone, purpose, isUsed: false, expiresAt: { gt: new Date() } },
+      orderBy: { createdAt: "desc" },
+    });
+  }
+
+  async findLatestOtp(phone: string, purpose: OtpPurpose): Promise<OtpVerification | null> {
+    return prisma.otpVerification.findFirst({
+      where: { phone, purpose },
       orderBy: { createdAt: "desc" },
     });
   }
@@ -121,10 +120,6 @@ export class AuthRepository {
     });
   }
 
-  /**
-   * Revoke all active refresh tokens for a user.
-   * Used on logout-all-devices or account suspension.
-   */
   async revokeAllUserRefreshTokens(userId: string): Promise<void> {
     await prisma.refreshToken.updateMany({
       where: { userId, isRevoked: false },
@@ -132,16 +127,11 @@ export class AuthRepository {
     });
   }
 
-  /**
-   * Enforce a max of N active sessions per user.
-   * Revokes oldest tokens beyond the limit.
-   */
   async enforceMaxSessions(userId: string, maxSessions = 5): Promise<void> {
     const activeTokens = await prisma.refreshToken.findMany({
       where: { userId, isRevoked: false, expiresAt: { gt: new Date() } },
-      orderBy: { createdAt: "asc" }, // oldest first
+      orderBy: { createdAt: "asc" },
     });
-
     if (activeTokens.length >= maxSessions) {
       const toRevoke = activeTokens.slice(0, activeTokens.length - maxSessions + 1);
       await prisma.refreshToken.updateMany({
@@ -149,5 +139,80 @@ export class AuthRepository {
         data: { isRevoked: true },
       });
     }
+  }
+
+  // ─── Password Reset Token ──────────────────────────────
+
+  async invalidatePreviousResetTokens(userId: string): Promise<void> {
+    await prisma.passwordResetToken.updateMany({
+      where: { userId, isUsed: false },
+      data: { isUsed: true },
+    });
+  }
+
+  async createPasswordResetToken(data: {
+    userId: string;
+    tokenHash: string;
+    expiresAt: Date;
+  }): Promise<PasswordResetToken> {
+    return prisma.passwordResetToken.create({ data });
+  }
+
+  async findPasswordResetToken(tokenHash: string): Promise<PasswordResetToken | null> {
+    return prisma.passwordResetToken.findUnique({ where: { tokenHash } });
+  }
+
+  async markResetTokenUsed(tokenId: string): Promise<void> {
+    await prisma.passwordResetToken.update({
+      where: { id: tokenId },
+      data: { isUsed: true },
+    });
+  }
+
+  // ─── Profiles ──────────────────────────────────────────
+
+  /**
+   * Atomically activate user + create the correct profile in one transaction.
+   * ownerProfile requires businessLat/Lng — passed from registration input.
+   * customerProfile just needs userId.
+   *
+   * roleName is compared case-insensitively so "owner"/"Owner" both work.
+   */
+  async activateUserWithProfile(
+    userId: string,
+    passwordHash: string,
+    roleName: string,
+    ownerLocation?: { businessLat: number; businessLng: number }
+  ): Promise<User> {
+    return prisma.$transaction(async (tx) => {
+      // 1. Activate user + set password
+      const user = await tx.user.update({
+        where: { id: userId },
+        data: { passwordHash, accountStatus: "ACTIVE" },
+      });
+
+      const role = roleName.toLowerCase();
+
+      if (role === "owner") {
+        // OwnerProfile requires business location
+        if (!ownerLocation) {
+          throw new Error("Business location is required for owner registration");
+        }
+        await tx.ownerProfile.create({
+          data: {
+            userId,
+            businessLat: ownerLocation.businessLat,
+            businessLng: ownerLocation.businessLng,
+          },
+        });
+      } else if (role === "customer") {
+        await tx.customerProfile.create({
+          data: { userId },
+        });
+      }
+      // Technician role — no profile table in current schema, extend later
+
+      return user;
+    });
   }
 }

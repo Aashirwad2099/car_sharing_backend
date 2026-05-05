@@ -5,29 +5,31 @@ import {
   InitiateRegisterDto,
   VerifyOtpDto,
   CompleteRegisterDto,
+  ResendOtpDto,
   LoginDto,
+  ForgotPasswordDto,
+  VerifyForgotPasswordOtpDto,
+  ResetPasswordDto,
 } from "./auth.dto.js";
 
 const router = Router();
 const authController = new AuthController();
 
-// ─── Registration ──────────────────────────────────────────────────────────────
-
 /**
  * @swagger
  * tags:
  *   name: Auth
- *   description: Authentication — registration and login
+ *   description: Authentication — registration, login, password reset
  */
+
+// ─── Registration ──────────────────────────────────────────
 
 /**
  * @swagger
  * /auth/register/initiate:
  *   post:
  *     summary: Step 1 — Initiate registration
- *     description: |
- *       Creates a PENDING user account and sends a 6-digit OTP to the provided
- *       phone number via SMS. In development the OTP is returned in `_devOtp`.
+ *     description: Creates a PENDING user and sends OTP to phone. In dev, OTP is returned in `_devOtp`.
  *     tags: [Auth]
  *     security: []
  *     requestBody:
@@ -38,7 +40,7 @@ const authController = new AuthController();
  *             $ref: '#/components/schemas/InitiateRegisterRequest'
  *     responses:
  *       200:
- *         description: OTP sent successfully
+ *         description: OTP sent
  *         content:
  *           application/json:
  *             schema:
@@ -49,15 +51,11 @@ const authController = new AuthController();
  *                     data:
  *                       $ref: '#/components/schemas/InitiateRegisterResponse'
  *       409:
- *         description: Phone number already registered
+ *         description: Phone already registered
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
- *             example:
- *               success: false
- *               message: "Phone number already registered"
- *               code: "AUTH_PHONE_ALREADY_EXISTS"
  *       422:
  *         description: Validation error
  *         content:
@@ -65,20 +63,67 @@ const authController = new AuthController();
  *             schema:
  *               $ref: '#/components/schemas/ValidationErrorResponse'
  */
-router.post(
-  "/register/initiate",
-  validate(InitiateRegisterDto),
-  authController.initiateRegister
-);
+router.post("/register/initiate", validate(InitiateRegisterDto), authController.initiateRegister);
+
+/**
+ * @swagger
+ * /auth/register/resend-otp:
+ *   post:
+ *     summary: Resend registration OTP
+ *     description: |
+ *       Resends OTP to the phone number. A 60-second cooldown is enforced
+ *       between resend requests. Old OTPs are invalidated.
+ *     tags: [Auth]
+ *     security: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/ResendOtpRequest'
+ *     responses:
+ *       200:
+ *         description: OTP resent successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessResponse'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       $ref: '#/components/schemas/InitiateRegisterResponse'
+ *       404:
+ *         description: Phone not registered
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       429:
+ *         description: Resend cooldown active
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *             example:
+ *               success: false
+ *               message: "Please wait 45 second(s) before requesting a new OTP."
+ *               code: "AUTH_OTP_RESEND_TOO_SOON"
+ *       422:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ValidationErrorResponse'
+ */
+router.post("/register/resend-otp", validate(ResendOtpDto), authController.resendOtp);
 
 /**
  * @swagger
  * /auth/register/verify-otp:
  *   post:
- *     summary: Step 2 — Verify OTP
- *     description: |
- *       Verifies the OTP sent to the user's phone. On success, marks the phone
- *       as verified. OTP expires in 10 minutes and allows max 5 attempts.
+ *     summary: Step 2 — Verify registration OTP
+ *     description: Verifies OTP and marks phone as verified. Max 5 attempts. Expires in 10 min.
  *     tags: [Auth]
  *     security: []
  *     requestBody:
@@ -89,15 +134,11 @@ router.post(
  *             $ref: '#/components/schemas/VerifyOtpRequest'
  *     responses:
  *       200:
- *         description: Phone verified successfully
+ *         description: Phone verified
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/SuccessResponse'
- *             example:
- *               success: true
- *               message: "Phone verified successfully"
- *               data: { message: "Phone verified successfully" }
  *       400:
  *         description: Invalid or expired OTP
  *         content:
@@ -116,15 +157,11 @@ router.post(
  *                   message: "Invalid OTP. 2 attempt(s) remaining."
  *                   code: "AUTH_OTP_INVALID"
  *       429:
- *         description: Max OTP attempts exceeded
+ *         description: Max attempts exceeded
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
- *             example:
- *               success: false
- *               message: "Maximum OTP attempts exceeded. Please request a new OTP."
- *               code: "AUTH_OTP_MAX_ATTEMPTS"
  *       422:
  *         description: Validation error
  *         content:
@@ -132,20 +169,14 @@ router.post(
  *             schema:
  *               $ref: '#/components/schemas/ValidationErrorResponse'
  */
-router.post(
-  "/register/verify-otp",
-  validate(VerifyOtpDto),
-  authController.verifyOtp
-);
+router.post("/register/verify-otp", validate(VerifyOtpDto), authController.verifyOtp);
 
 /**
  * @swagger
  * /auth/register/complete:
  *   post:
  *     summary: Step 3 — Complete registration
- *     description: |
- *       Sets the user's password and activates the account. Phone must be
- *       verified (Step 2) before calling this endpoint.
+ *     description: Sets password and activates account. Phone must be verified first.
  *     tags: [Auth]
  *     security: []
  *     requestBody:
@@ -161,22 +192,12 @@ router.post(
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/SuccessResponse'
- *             example:
- *               success: true
- *               message: "Registration complete. You can now log in."
- *               data:
- *                 message: "Registration complete. You can now log in."
- *                 userId: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
  *       400:
- *         description: Phone not verified or passwords don't match
+ *         description: Phone not verified
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
- *             example:
- *               success: false
- *               message: "Please verify your phone number before completing registration"
- *               code: "AUTH_PHONE_NOT_VERIFIED"
  *       422:
  *         description: Validation error
  *         content:
@@ -184,24 +205,16 @@ router.post(
  *             schema:
  *               $ref: '#/components/schemas/ValidationErrorResponse'
  */
-router.post(
-  "/register/complete",
-  validate(CompleteRegisterDto),
-  authController.completeRegister
-);
+router.post("/register/complete", validate(CompleteRegisterDto), authController.completeRegister);
 
-// ─── Login ─────────────────────────────────────────────────────────────────────
+// ─── Login ─────────────────────────────────────────────────
 
 /**
  * @swagger
  * /auth/login:
  *   post:
  *     summary: Login with phone + password
- *     description: |
- *       Authenticates a user with phone number and password. No OTP required.
- *       Returns a short-lived access token (15 min) and a long-lived refresh
- *       token (30 days). Max 5 concurrent sessions per user — oldest session
- *       is revoked when limit is reached.
+ *     description: Returns access token (15 min) and refresh token (30 days). No OTP required.
  *     tags: [Auth]
  *     security: []
  *     requestBody:
@@ -228,27 +241,12 @@ router.post(
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
- *             example:
- *               success: false
- *               message: "Invalid phone number or password"
- *               code: "AUTH_INVALID_CREDENTIALS"
  *       403:
  *         description: Account pending or suspended
  *         content:
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
- *             examples:
- *               pending:
- *                 value:
- *                   success: false
- *                   message: "Account registration is incomplete."
- *                   code: "AUTH_ACCOUNT_PENDING"
- *               suspended:
- *                 value:
- *                   success: false
- *                   message: "Your account has been suspended."
- *                   code: "AUTH_ACCOUNT_SUSPENDED"
  *       422:
  *         description: Validation error
  *         content:
@@ -262,12 +260,10 @@ router.post("/login", validate(LoginDto), authController.login);
  * @swagger
  * /auth/refresh:
  *   post:
- *     summary: Refresh access token
+ *     summary: Rotate refresh token
  *     description: |
- *       Exchanges a valid refresh token for a new access + refresh token pair
- *       (token rotation). The old refresh token is invalidated immediately.
- *       If a revoked token is reused, all sessions for that user are wiped
- *       (theft detection).
+ *       Exchanges a valid refresh token for a new access + refresh token pair.
+ *       Old token is immediately revoked. Reuse of revoked token wipes all sessions.
  *     tags: [Auth]
  *     security: []
  *     requestBody:
@@ -289,7 +285,134 @@ router.post("/login", validate(LoginDto), authController.login);
  *                     data:
  *                       $ref: '#/components/schemas/TokensResponse'
  *       401:
- *         description: Invalid, expired, or revoked refresh token
+ *         description: Invalid, expired, or revoked token
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ */
+router.post("/refresh", authController.refreshTokens);
+
+// ─── Forgot Password ───────────────────────────────────────
+
+/**
+ * @swagger
+ * /auth/forgot-password:
+ *   post:
+ *     summary: Step 1 — Request password reset OTP
+ *     description: |
+ *       Sends OTP to the registered phone. Always returns the same message
+ *       whether phone exists or not (prevents user enumeration).
+ *       60-second cooldown between requests.
+ *     tags: [Auth]
+ *     security: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/ForgotPasswordRequest'
+ *     responses:
+ *       200:
+ *         description: OTP sent (same response regardless of phone existence)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessResponse'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       $ref: '#/components/schemas/InitiateRegisterResponse'
+ *       429:
+ *         description: Resend cooldown active
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       422:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ValidationErrorResponse'
+ */
+router.post("/forgot-password", validate(ForgotPasswordDto), authController.forgotPassword);
+
+/**
+ * @swagger
+ * /auth/forgot-password/verify-otp:
+ *   post:
+ *     summary: Step 2 — Verify password reset OTP
+ *     description: |
+ *       Verifies the OTP. On success returns a short-lived `resetToken` (15 min)
+ *       which must be submitted in Step 3 to set the new password.
+ *     tags: [Auth]
+ *     security: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/VerifyOtpRequest'
+ *     responses:
+ *       200:
+ *         description: OTP verified — reset token issued
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessResponse'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       $ref: '#/components/schemas/VerifyForgotOtpResponse'
+ *       400:
+ *         description: Invalid or expired OTP
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       429:
+ *         description: Max attempts exceeded
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       422:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ValidationErrorResponse'
+ */
+router.post("/forgot-password/verify-otp", validate(VerifyForgotPasswordOtpDto), authController.verifyForgotPasswordOtp);
+
+/**
+ * @swagger
+ * /auth/forgot-password/reset:
+ *   post:
+ *     summary: Step 3 — Set new password
+ *     description: |
+ *       Sets a new password using the `resetToken` from Step 2. On success,
+ *       all active sessions are revoked and user must log in again.
+ *     tags: [Auth]
+ *     security: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/ResetPasswordRequest'
+ *     responses:
+ *       200:
+ *         description: Password reset successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ *       400:
+ *         description: Invalid, used, or expired reset token
  *         content:
  *           application/json:
  *             schema:
@@ -298,19 +421,25 @@ router.post("/login", validate(LoginDto), authController.login);
  *               invalid:
  *                 value:
  *                   success: false
- *                   message: "Invalid refresh token"
- *                   code: "AUTH_TOKEN_INVALID"
+ *                   message: "Invalid reset token"
+ *                   code: "AUTH_RESET_TOKEN_INVALID"
+ *               used:
+ *                 value:
+ *                   success: false
+ *                   message: "Reset token has already been used."
+ *                   code: "AUTH_RESET_TOKEN_USED"
  *               expired:
  *                 value:
  *                   success: false
- *                   message: "Refresh token expired. Please log in again."
- *                   code: "AUTH_TOKEN_EXPIRED"
- *               revoked:
- *                 value:
- *                   success: false
- *                   message: "Refresh token has been revoked. Please log in again."
- *                   code: "AUTH_TOKEN_REVOKED"
+ *                   message: "Reset token has expired."
+ *                   code: "AUTH_RESET_TOKEN_EXPIRED"
+ *       422:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ValidationErrorResponse'
  */
-router.post("/refresh", authController.refreshTokens);
+router.post("/forgot-password/reset", validate(ResetPasswordDto), authController.resetPassword);
 
 export default router;

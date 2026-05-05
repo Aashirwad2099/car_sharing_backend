@@ -8,7 +8,7 @@ export interface JwtPayload {
   type: "access" | "refresh";
 }
 
-const ACCESS_TOKEN_EXPIRY  = "15m";
+const ACCESS_TOKEN_EXPIRY  = "24h";
 const REFRESH_TOKEN_EXPIRY = "30d";
 
 const signOptions = (expiresIn: SignOptions["expiresIn"]): SignOptions => ({
